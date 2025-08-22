@@ -690,12 +690,19 @@ class QuerySet(AltersData):
         return objs_with_pk, objs_without_pk
 
     def _check_bulk_create_options(
-        self, ignore_conflicts, update_conflicts, update_fields, unique_fields
+        self,
+        ignore_conflicts,
+        update_conflicts,
+        update_fields,
+        unique_fields,
+        return_fields,
     ):
         if ignore_conflicts and update_conflicts:
             raise ValueError(
                 "ignore_conflicts and update_conflicts are mutually exclusive."
             )
+        if return_fields and not update_conflicts:
+            raise ValueError("return_fields can only be set for update_conflicts.")
         db_features = connections[self.db].features
         if ignore_conflicts:
             if not db_features.supports_ignore_conflicts:
@@ -740,6 +747,12 @@ class QuerySet(AltersData):
                         "bulk_create() can only be used with concrete fields "
                         "in unique_fields."
                     )
+            if return_fields:
+                if any(not f.concrete or f.many_to_many for f in return_fields):
+                    raise ValueError(
+                        "bulk_create() can only be used with concrete fields "
+                        "in return_fields."
+                    )
             return OnConflict.UPDATE
         return None
 
@@ -751,6 +764,7 @@ class QuerySet(AltersData):
         update_conflicts=False,
         update_fields=None,
         unique_fields=None,
+        return_fields=None,
     ):
         """
         Insert each of the instances into the database. Do *not* call
@@ -793,11 +807,14 @@ class QuerySet(AltersData):
             ]
         if update_fields:
             update_fields = [self.model._meta.get_field(name) for name in update_fields]
+        if return_fields:
+            return_fields = [self.model._meta.get_field(name) for name in return_fields]
         on_conflict = self._check_bulk_create_options(
             ignore_conflicts,
             update_conflicts,
             update_fields,
             unique_fields,
+            return_fields,
         )
         self._for_write = True
         fields = [f for f in opts.concrete_fields if not f.generated]
@@ -817,6 +834,7 @@ class QuerySet(AltersData):
                     on_conflict=on_conflict,
                     update_fields=update_fields,
                     unique_fields=unique_fields,
+                    return_fields=return_fields,
                 )
             if objs_without_pk:
                 fields = [f for f in fields if not isinstance(f, AutoField)]
@@ -827,6 +845,7 @@ class QuerySet(AltersData):
                     on_conflict=on_conflict,
                     update_fields=update_fields,
                     unique_fields=unique_fields,
+                    return_fields=return_fields,
                 )
 
         return objs
@@ -1894,6 +1913,7 @@ class QuerySet(AltersData):
         on_conflict=None,
         update_fields=None,
         unique_fields=None,
+        return_fields=None,
     ):
         """
         Helper method for bulk_create() to insert objs one batch at a time.
@@ -1909,10 +1929,8 @@ class QuerySet(AltersData):
         )
         if can_return_fields:
             returning_fields = opts.db_returning_fields
-            if on_conflict == OnConflict.UPDATE:
-                for pk_field in opts.pk_fields:
-                    if pk_field not in returning_fields:
-                        returning_fields.append(pk_field)
+            if return_fields:
+                returning_fields = returning_fields + return_fields
         else:
             returning_fields = None
         batches = [objs[i : i + batch_size] for i in range(0, len(objs), batch_size)]

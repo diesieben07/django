@@ -172,6 +172,7 @@ class BulkCreateTests(TestCase):
             update_conflicts=True,
             unique_fields=("f1",),
             update_fields=("f1",),
+            return_fields=("id", "f1"),
         )
         self.assertEqual(results[1].pk, pks[1])
         self.assertEqual(results[4].pk, pks[0])
