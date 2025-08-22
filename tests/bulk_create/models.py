@@ -70,6 +70,11 @@ class TwoFields(models.Model):
     name = models.CharField(max_length=15, null=True)
 
 
+class CustomPk(models.Model):
+    id = models.UUIDField(default=uuid.uuid4, primary_key=True)
+    f1 = models.IntegerField(unique=True)
+
+
 class FieldsWithDbColumns(models.Model):
     rank = models.IntegerField(unique=True, db_column="rAnK")
     name = models.CharField(max_length=15, null=True, db_column="oTheRNaMe")

@@ -24,6 +24,7 @@ from django.utils import timezone
 from .models import (
     BigAutoFieldModel,
     Country,
+    CustomPk,
     DbDefaultModel,
     DbDefaultPrimaryKey,
     FieldsWithDbColumns,
@@ -162,6 +163,19 @@ class BulkCreateTests(TestCase):
             ],
             attrgetter("two_letter_code"),
         )
+
+    def test_non_auto_increment_pk_with_update(self):
+        CustomPk.objects.bulk_create([CustomPk(f1=f1) for f1 in [1, 2, 3]])
+        pks = CustomPk.objects.order_by("f1").values_list("pk", flat=True)
+        results = CustomPk.objects.bulk_create(
+            [CustomPk(f1=f1) for f1 in [10, 2, 4, 5, 1, 3]],
+            update_conflicts=True,
+            unique_fields=("f1",),
+            update_fields=("f1",),
+        )
+        self.assertEqual(results[1].pk, pks[1])
+        self.assertEqual(results[4].pk, pks[0])
+        self.assertEqual(results[5].pk, pks[2])
 
     @skipUnlessDBFeature("has_bulk_insert")
     def test_non_auto_increment_pk_efficiency(self):

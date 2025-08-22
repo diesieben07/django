@@ -810,7 +810,7 @@ class QuerySet(AltersData):
         with context:
             self._handle_order_with_respect_to(objs)
             if objs_with_pk:
-                returned_columns = self._batched_insert(
+                self._batched_insert(
                     objs_with_pk,
                     fields,
                     batch_size,
@@ -818,16 +818,9 @@ class QuerySet(AltersData):
                     update_fields=update_fields,
                     unique_fields=unique_fields,
                 )
-                for obj_with_pk, results in zip(objs_with_pk, returned_columns):
-                    for result, field in zip(results, opts.db_returning_fields):
-                        if field != opts.pk:
-                            setattr(obj_with_pk, field.attname, result)
-                for obj_with_pk in objs_with_pk:
-                    obj_with_pk._state.adding = False
-                    obj_with_pk._state.db = self.db
             if objs_without_pk:
                 fields = [f for f in fields if not isinstance(f, AutoField)]
-                returned_columns = self._batched_insert(
+                self._batched_insert(
                     objs_without_pk,
                     fields,
                     batch_size,
@@ -835,17 +828,6 @@ class QuerySet(AltersData):
                     update_fields=update_fields,
                     unique_fields=unique_fields,
                 )
-                connection = connections[self.db]
-                if (
-                    connection.features.can_return_rows_from_bulk_insert
-                    and on_conflict is None
-                ):
-                    assert len(returned_columns) == len(objs_without_pk)
-                for obj_without_pk, results in zip(objs_without_pk, returned_columns):
-                    for result, field in zip(results, opts.db_returning_fields):
-                        setattr(obj_without_pk, field.attname, result)
-                    obj_without_pk._state.adding = False
-                    obj_without_pk._state.db = self.db
 
         return objs
 
@@ -1920,34 +1902,48 @@ class QuerySet(AltersData):
         ops = connection.ops
         max_batch_size = max(ops.bulk_batch_size(fields, objs), 1)
         batch_size = min(batch_size, max_batch_size) if batch_size else max_batch_size
-        inserted_rows = []
-        returning_fields = (
-            self.model._meta.db_returning_fields
-            if (
-                connection.features.can_return_rows_from_bulk_insert
-                and (on_conflict is None or on_conflict == OnConflict.UPDATE)
-            )
-            else None
+
+        opts = self.model._meta
+        can_return_fields = connection.features.can_return_rows_from_bulk_insert and (
+            on_conflict is None or on_conflict == OnConflict.UPDATE
         )
+        if can_return_fields:
+            returning_fields = opts.db_returning_fields
+            if on_conflict == OnConflict.UPDATE:
+                for pk_field in opts.pk_fields:
+                    if pk_field not in returning_fields:
+                        returning_fields.append(pk_field)
+        else:
+            returning_fields = None
         batches = [objs[i : i + batch_size] for i in range(0, len(objs), batch_size)]
         if len(batches) > 1:
             context = transaction.atomic(using=self.db, savepoint=False)
         else:
             context = nullcontext()
+
         with context:
-            for item in batches:
-                inserted_rows.extend(
-                    self._insert(
-                        item,
-                        fields=fields,
-                        using=self.db,
-                        on_conflict=on_conflict,
-                        update_fields=update_fields,
-                        unique_fields=unique_fields,
-                        returning_fields=returning_fields,
-                    )
+            for batch_objs in batches:
+                returned_columns = self._insert(
+                    batch_objs,
+                    fields=fields,
+                    using=self.db,
+                    on_conflict=on_conflict,
+                    update_fields=update_fields,
+                    unique_fields=unique_fields,
+                    returning_fields=returning_fields,
                 )
-        return inserted_rows
+
+                if returning_fields:
+                    assert len(returned_columns) == len(batch_objs)
+                    for obj, results in zip(batch_objs, returned_columns):
+                        for result, field in zip(results, returning_fields):
+                            setattr(obj, field.attname, result)
+                        obj._state.adding = False
+                        obj._state.db = self.db
+                else:
+                    for obj in batch_objs:
+                        obj._state.adding = False
+                        obj._state.db = self.db
 
     def _chain(self):
         """
