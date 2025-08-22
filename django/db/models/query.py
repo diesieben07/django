@@ -748,6 +748,11 @@ class QuerySet(AltersData):
                         "in unique_fields."
                     )
             if return_fields:
+                if not db_features.can_return_rows_from_bulk_insert:
+                    raise NotSupportedError(
+                        "This database backend does not support returning fields "
+                        "for bulk inserts."
+                    )
                 if any(not f.concrete or f.many_to_many for f in return_fields):
                     raise ValueError(
                         "bulk_create() can only be used with concrete fields "
