@@ -839,7 +839,7 @@ class QuerySet(AltersData):
                     on_conflict=on_conflict,
                     update_fields=update_fields,
                     unique_fields=unique_fields,
-                    return_fields=return_fields,
+                    returning_fields=return_fields,
                 )
             if objs_without_pk:
                 fields = [f for f in fields if not isinstance(f, AutoField)]
@@ -850,7 +850,7 @@ class QuerySet(AltersData):
                     on_conflict=on_conflict,
                     update_fields=update_fields,
                     unique_fields=unique_fields,
-                    return_fields=return_fields,
+                    returning_fields=return_fields,
                 )
 
         return objs
@@ -1918,7 +1918,7 @@ class QuerySet(AltersData):
         on_conflict=None,
         update_fields=None,
         unique_fields=None,
-        return_fields=None,
+        returning_fields=None,
     ):
         """
         Helper method for bulk_create() to insert objs one batch at a time.
@@ -1932,12 +1932,8 @@ class QuerySet(AltersData):
         can_return_fields = connection.features.can_return_rows_from_bulk_insert and (
             on_conflict is None or on_conflict == OnConflict.UPDATE
         )
-        if can_return_fields:
+        if can_return_fields and returning_fields is None:
             returning_fields = opts.db_returning_fields
-            if return_fields:
-                returning_fields = returning_fields + return_fields
-        else:
-            returning_fields = None
         batches = [objs[i : i + batch_size] for i in range(0, len(objs), batch_size)]
         if len(batches) > 1:
             context = transaction.atomic(using=self.db, savepoint=False)
