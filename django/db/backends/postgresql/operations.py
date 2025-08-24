@@ -399,8 +399,8 @@ class DatabaseOperations(BaseDatabaseOperations):
                 ", ".join(map(self.quote_name, unique_fields)),
                 ", ".join(
                     [
-                        f"{field} = EXCLUDED.{field}"
-                        for field in map(self.quote_name, update_fields)
+                        f"{self.quote_name(field)} = {render_expr()}"
+                        for field, render_expr in update_fields
                     ]
                 ),
             )

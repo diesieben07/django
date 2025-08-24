@@ -1,4 +1,5 @@
 import collections
+import functools
 import json
 import re
 from functools import partial
@@ -1712,7 +1713,7 @@ class SQLInsertCompiler(SQLCompiler):
 
         return sql, params
 
-    def prepare_value(self, field, value):
+    def prepare_value(self, field, value, for_update=False):
         """
         Prepare a value to be used in a query by resolving it if it is an
         expression and otherwise calling the field's get_db_prep_save().
@@ -1724,7 +1725,7 @@ class SQLInsertCompiler(SQLCompiler):
             # Don't allow values containing Col expressions. They refer to
             # existing columns on a row, but in the case of insert the row
             # doesn't exist yet.
-            if value.contains_column_references:
+            if not for_update and value.contains_column_references:
                 raise ValueError(
                     'Failed to insert expression "%s" on %s. F() expressions '
                     "can only be used to update, not to insert." % (value, field)
@@ -1868,10 +1869,25 @@ class SQLInsertCompiler(SQLCompiler):
 
         placeholder_rows, param_rows = self.assemble_as_sql(fields, value_rows)
 
+        on_conflict_suffix_params = []
+
+        def render_on_conflict_value(conflict_field, value):
+            value = self.prepare_value(conflict_field, value, for_update=True)
+            if hasattr(value, "as_sql"):
+                sql, field_params = self.compile(value)
+                on_conflict_suffix_params.extend(field_params)
+                return sql
+            else:
+                on_conflict_suffix_params.append(value)
+                return "%s"
+
         on_conflict_suffix_sql = self.connection.ops.on_conflict_suffix_sql(
             fields,
             self.query.on_conflict,
-            (f.column for f in self.query.update_fields),
+            (
+                (f.column, functools.partial(render_on_conflict_value, f, value))
+                for f, value in self.query.update_fields
+            ),
             (f.column for f in self.query.unique_fields),
         )
         if (
@@ -1888,6 +1904,7 @@ class SQLInsertCompiler(SQLCompiler):
                 params = [param_rows[0]]
             if on_conflict_suffix_sql:
                 result.append(on_conflict_suffix_sql)
+                params.append(on_conflict_suffix_params)
             # Skip empty r_sql to allow subclasses to customize behavior for
             # 3rd party backends. Refs #19096.
             r_sql, self.returning_params = self.connection.ops.return_insert_columns(

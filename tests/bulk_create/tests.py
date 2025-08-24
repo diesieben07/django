@@ -10,7 +10,8 @@ from django.db import (
     ProgrammingError,
     connection,
 )
-from django.db.models import FileField, Value
+from django.db.models import F, FileField, Value
+from django.db.models.expressions import Excluded
 from django.db.models.functions import Lower, Now
 from django.test import (
     TestCase,
@@ -883,6 +884,29 @@ class BulkCreateTests(TestCase):
     def test_db_default_primary_key(self):
         (obj,) = DbDefaultPrimaryKey.objects.bulk_create([DbDefaultPrimaryKey()])
         self.assertIsInstance(obj.id, datetime)
+
+    @skipUnlessDBFeature(
+        "can_return_rows_from_bulk_insert", "supports_expression_defaults"
+    )
+    def test_update_with_expression(self):
+        TwoFields.objects.create(f1=1, f2=2)
+        TwoFields.objects.bulk_create(
+            [
+                TwoFields(f1=1, f2=3),
+                TwoFields(f1=3, f2=4),
+            ],
+            update_conflicts=True,
+            unique_fields=("f1",),
+            update_fields={
+                "f1": Excluded("f1"),
+                "f2": F("f2") + Excluded("f2"),
+            },
+        )
+        self.assertQuerySetEqual(
+            TwoFields.objects.order_by("f1", "f2"),
+            ((1, 5), (3, 4)),
+            transform=lambda o: (o.f1, o.f2),
+        )
 
 
 @skipUnlessDBFeature("supports_transactions", "has_bulk_insert")

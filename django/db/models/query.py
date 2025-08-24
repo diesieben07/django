@@ -5,6 +5,7 @@ The main QuerySet implementation. This provides the public API for the ORM.
 import copy
 import operator
 import warnings
+from collections.abc import Mapping
 from contextlib import nullcontext
 from functools import reduce
 from itertools import chain, islice
@@ -25,7 +26,7 @@ from django.db import (
 from django.db.models import AutoField, DateField, DateTimeField, Field, Max, sql
 from django.db.models.constants import LOOKUP_SEP, OnConflict
 from django.db.models.deletion import Collector
-from django.db.models.expressions import Case, DatabaseDefault, F, Value, When
+from django.db.models.expressions import Case, DatabaseDefault, Excluded, F, Value, When
 from django.db.models.functions import Cast, Trunc
 from django.db.models.query_utils import FilteredRelation, Q
 from django.db.models.sql.constants import GET_ITERATOR_CHUNK_SIZE, ROW_COUNT
@@ -724,12 +725,12 @@ class QuerySet(AltersData):
                     "Unique fields that can trigger the upsert must be provided."
                 )
             # Updating primary keys and non-concrete fields is forbidden.
-            if any(not f.concrete or f.many_to_many for f in update_fields):
+            if any(not f.concrete or f.many_to_many for f, _ in update_fields):
                 raise ValueError(
                     "bulk_create() can only be used with concrete fields in "
                     "update_fields."
                 )
-            if any(f in self.model._meta.pk_fields for f in update_fields):
+            if any(f in self.model._meta.pk_fields for f, _ in update_fields):
                 raise ValueError(
                     "bulk_create() cannot be used with primary keys in "
                     "update_fields."
@@ -791,8 +792,16 @@ class QuerySet(AltersData):
                 self.model._meta.get_field(opts.pk.name if name == "pk" else name)
                 for name in unique_fields
             ]
-        if update_fields:
-            update_fields = [self.model._meta.get_field(name) for name in update_fields]
+        if isinstance(update_fields, Mapping) and update_fields:
+            update_fields = [
+                (self.model._meta.get_field(name), value)
+                for name, value in update_fields.items()
+            ]
+        elif update_fields:
+            update_fields = [
+                (self.model._meta.get_field(name), Excluded(name))
+                for name in update_fields
+            ]
         on_conflict = self._check_bulk_create_options(
             ignore_conflicts,
             update_conflicts,

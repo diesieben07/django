@@ -874,6 +874,36 @@ class TemporalSubtraction(CombinedExpression):
         )
 
 
+class ResolvedExcluded(Expression):
+
+    def __init__(self, name):
+        super().__init__()
+        self.name = name
+
+    def resolve_expression(self, *args, **kwargs):
+        return self
+
+    def as_sql(self, compiler, connection):
+        return "EXCLUDED." + connection.ops.quote_name(self.name), []
+
+
+class Excluded(Expression):
+
+    def __init__(self, name):
+        super().__init__(name)
+        self.name = name
+
+    def resolve_expression(self, query=None, *args, **kwargs):
+        from django.db.models.sql import InsertQuery
+
+        if not isinstance(query, InsertQuery):
+            raise TypeError("Excluded can only be used with bulk_create")
+        field = next(iter((f for f in query.fields if f.name == self.name)), None)
+        if field is None:
+            raise FieldError("No such field %s" % self.name)
+        return ResolvedExcluded(self.name)
+
+
 @deconstructible(path="django.db.models.F")
 class F(Combinable):
     """An object capable of resolving references to existing query objects."""
